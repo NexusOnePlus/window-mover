@@ -29,7 +29,7 @@ DWORD g_mainThreadId = 0;
 
 void InitializeVirtualDesktopManager() {
     std::cout << "Initializing COM..." << std::endl;
-    
+
     HRESULT hr = CoInitialize(NULL);
     if (FAILED(hr)) {
         std::cerr << "CoInitialize failed: " << std::hex << hr << std::endl;
@@ -65,7 +65,7 @@ void InitializeVirtualDesktopManager() {
 
 void MoveWindowToDesktop(int direction) {
     std::cout << "--- MoveWindowToDesktop (" << direction << ") ---" << std::endl;
-    
+
     if (!pVDMInternal || !pAppViewCollection) {
         std::cerr << "Error: Interfaces not initialized." << std::endl;
         return;
@@ -110,6 +110,13 @@ void MoveWindowToDesktop(int direction) {
     hr = pVDMInternal->MoveViewToDesktop(pView, pAdjacentDesktop);
     if (SUCCEEDED(hr)) {
         std::cout << "SUCCESS: Window moved!" << std::endl;
+
+        hr = pVDMInternal->SwitchDesktop(pAdjacentDesktop);
+        if (SUCCEEDED(hr)) {
+            std::cout << "SUCCESS: Switched to new desktop!" << std::endl;
+        } else {
+            std::cerr << "SwitchDesktop failed: " << std::hex << hr << std::endl;
+        }
     } else {
         std::cerr << "MoveViewToDesktop failed: " << std::hex << hr << std::endl;
     }
@@ -127,14 +134,14 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION) {
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
             KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
-            
+
             if (p->vkCode == VK_LEFT || p->vkCode == VK_RIGHT) {
                 bool shiftPressed = (GetAsyncKeyState(VK_SHIFT) & 0x8000);
                 bool winPressed = (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000);
 
                 if (shiftPressed && winPressed) {
                     std::cout << "[HOOK] Win+Shift+" << (p->vkCode == VK_LEFT ? "LEFT" : "RIGHT") << " detected." << std::endl;
-                    
+
                     if (p->vkCode == VK_LEFT) {
                         PostThreadMessage(g_mainThreadId, WM_APP_MOVE_LEFT, 0, 0);
                     } else {
