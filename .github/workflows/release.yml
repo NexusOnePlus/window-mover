@@ -13,17 +13,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-    - name: Setup MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: UCRT64
-        update: true
-        install: git mingw-w64-ucrt-x86_64-gcc
-        path-type: strict
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: git mingw-w64-ucrt-x86_64-gcc
+          path-type: strict
 
-    - name: Compile DesktopMover
-      run: |
-        g++ -o DesktopMover.exe DesktopMover.cpp -lole32 -loleaut32 -lruntimeobject -luuid -mwindows -static
+      - name: Compile DesktopMover
+        run: |
+          g++ -o DesktopMover.exe DesktopMover.cpp -lole32 -loleaut32 -lruntimeobject -luuid -mwindows -static
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
