@@ -20,7 +20,7 @@ Requires **MinGW-w64** (g++) with Windows library support.
 Run the following command in your terminal from the project root:
 
 ```bash
-g++ -o window-mover/DesktopMover.exe window-mover/DesktopMover.cpp -lole32 -loleaut32 -lruntimeobject -luuid -static
+g++ -o DesktopMover.exe DesktopMover.cpp -lole32 -loleaut32 -lruntimeobject -luuid -static
 ```
 
 ### Libraries Used
