@@ -10,10 +10,12 @@
 // Constants & Globals
 // ----------------------------------------------------------------------------
 
-#define WM_APP_MOVE_LEFT  (WM_APP + 1)
-#define WM_APP_MOVE_RIGHT (WM_APP + 2)
+#define WM_APP_MOVE_LEFT       (WM_APP + 1)
+#define WM_APP_MOVE_RIGHT      (WM_APP + 2)
+#define WM_APP_SWITCH_TO_INDEX (WM_APP + 3)
+#define WM_APP_MOVE_TO_INDEX   (WM_APP + 4)
 
-// Internal Desktop Enums (Standard for Windows 10/11)
+// Internal Desktop Enums
 #define VD_DIRECTION_LEFT 3
 #define VD_DIRECTION_RIGHT 4
 
@@ -31,123 +33,187 @@ void InitializeVirtualDesktopManager() {
     std::cout << "Initializing COM..." << std::endl;
 
     HRESULT hr = CoInitialize(NULL);
-    if (FAILED(hr)) {
-        std::cerr << "CoInitialize failed: " << std::hex << hr << std::endl;
-        return;
-    }
+    if (FAILED(hr)) return;
 
     hr = CoCreateInstance(CLSID_ImmersiveShell, nullptr, CLSCTX_LOCAL_SERVER, IID_IServiceProvider, (void**)&pServiceProvider);
-    if (FAILED(hr)) {
-        std::cerr << "CoCreateInstance(ImmersiveShell) failed: " << std::hex << hr << std::endl;
-        return;
-    }
+    if (FAILED(hr)) return;
 
     hr = pServiceProvider->QueryService(CLSID_VirtualDesktopManagerInternal_24H2, IID_IVirtualDesktopManagerInternal_24H2, (void**)&pVDMInternal);
     if (FAILED(hr)) {
-        std::cerr << "QueryService(IVirtualDesktopManagerInternal) failed. Check GUIDs. HR=" << std::hex << hr << std::endl;
+        std::cerr << "Failed to get IVirtualDesktopManagerInternal." << std::endl;
         return;
     }
-    std::cout << "Got IVirtualDesktopManagerInternal." << std::endl;
 
     hr = pServiceProvider->QueryService(IID_IApplicationViewCollection, IID_IApplicationViewCollection, (void**)&pAppViewCollection);
     if (FAILED(hr)) {
-        std::cerr << "QueryService(IApplicationViewCollection) failed. HR=" << std::hex << hr << std::endl;
-    } else {
-        std::cout << "Got IApplicationViewCollection." << std::endl;
+        std::cerr << "Failed to get IApplicationViewCollection." << std::endl;
     }
 
-    std::cout << "VirtualDesktopManager initialized successfully!" << std::endl;
+    std::cout << "VirtualDesktopManager initialized." << std::endl;
 }
 
 // ----------------------------------------------------------------------------
-// Desktop Management Logic
+// Helpers
 // ----------------------------------------------------------------------------
 
-void MoveWindowToDesktop(int direction) {
-    std::cout << "--- MoveWindowToDesktop (" << direction << ") ---" << std::endl;
+// Ensures enough desktops exist to reach targetIndex (0-based)
+// Returns the count of desktops after operation
+UINT EnsureDesktopCount(UINT targetIndex) {
+    if (!pVDMInternal) return 0;
 
-    if (!pVDMInternal || !pAppViewCollection) {
-        std::cerr << "Error: Interfaces not initialized." << std::endl;
-        return;
+    IObjectArray* pDesktops = nullptr;
+    HRESULT hr = pVDMInternal->GetDesktops(&pDesktops);
+    if (FAILED(hr)) return 0;
+
+    UINT count = 0;
+    pDesktops->GetCount(&count);
+    pDesktops->Release(); // Release initial get
+
+    while (count <= targetIndex) {
+        std::cout << "Creating Desktop " << count + 1 << "..." << std::endl;
+        IVirtualDesktop* pNewDesktop = nullptr;
+        hr = pVDMInternal->CreateDesktop(&pNewDesktop);
+        if (FAILED(hr)) {
+            std::cerr << "CreateDesktop failed." << std::endl;
+            break;
+        }
+        if (pNewDesktop) pNewDesktop->Release();
+        count++;
     }
+    return count;
+}
+
+IVirtualDesktop* GetDesktopAtIndex(UINT index) {
+    if (!pVDMInternal) return nullptr;
+    IObjectArray* pDesktops = nullptr;
+    pVDMInternal->GetDesktops(&pDesktops);
+    if (!pDesktops) return nullptr;
+
+    IVirtualDesktop* pDesktop = nullptr;
+    // Using IUnknown IID as generic accessor
+    pDesktops->GetAt(index, IID_IUnknown, (void**)&pDesktop);
+    pDesktops->Release();
+    return pDesktop;
+}
+
+// ----------------------------------------------------------------------------
+// Logic
+// ----------------------------------------------------------------------------
+
+void SwitchToDesktopAtIndex(int targetIndex) {
+    std::cout << "--- SwitchToDesktopAtIndex (" << targetIndex << ") ---" << std::endl;
+    if (!pVDMInternal) return;
+
+    EnsureDesktopCount(targetIndex);
+    
+    IVirtualDesktop* pTarget = GetDesktopAtIndex(targetIndex);
+    if (pTarget) {
+        pVDMInternal->SwitchDesktop(pTarget);
+        pTarget->Release();
+        std::cout << "Switched to Desktop " << targetIndex + 1 << std::endl;
+    }
+}
+
+void MoveWindowToDesktopAtIndex(int targetIndex) {
+    std::cout << "--- MoveWindowToDesktopAtIndex (" << targetIndex << ") ---" << std::endl;
+    if (!pVDMInternal || !pAppViewCollection) return;
 
     HWND hwnd = GetForegroundWindow();
-    if (!hwnd) {
-        std::cerr << "Error: No foreground window." << std::endl;
-        return;
-    }
-    std::cout << "Foreground Window HWND: " << std::hex << hwnd << std::dec << std::endl;
+    if (!hwnd) return;
 
     IApplicationView* pView = nullptr;
-    HRESULT hr = pAppViewCollection->GetViewForHwnd(hwnd, &pView);
-    if (FAILED(hr)) {
-        std::cerr << "GetViewForHwnd failed: " << std::hex << hr << std::endl;
-        return;
-    }
+    if (FAILED(pAppViewCollection->GetViewForHwnd(hwnd, &pView))) return;
 
-    IVirtualDesktop* pCurrentDesktop = nullptr;
-    hr = pVDMInternal->GetCurrentDesktop(&pCurrentDesktop);
-    if (FAILED(hr)) {
-        std::cerr << "GetCurrentDesktop failed: " << std::hex << hr << std::endl;
+    EnsureDesktopCount(targetIndex);
+
+    IVirtualDesktop* pTarget = GetDesktopAtIndex(targetIndex);
+    if (pTarget) {
+        pVDMInternal->MoveViewToDesktop(pView, pTarget);
+        pVDMInternal->SwitchDesktop(pTarget);
+        pTarget->Release();
+        std::cout << "Moved window and switched to Desktop " << targetIndex + 1 << std::endl;
+    }
+    pView->Release();
+}
+
+void MoveWindowRelative(int direction) {
+    std::cout << "--- MoveWindowRelative (" << direction << ") ---" << std::endl;
+    if (!pVDMInternal || !pAppViewCollection) return;
+
+    HWND hwnd = GetForegroundWindow();
+    if (!hwnd) return;
+
+    IApplicationView* pView = nullptr;
+    if (FAILED(pAppViewCollection->GetViewForHwnd(hwnd, &pView))) return;
+
+    IVirtualDesktop* pCurrent = nullptr;
+    if (FAILED(pVDMInternal->GetCurrentDesktop(&pCurrent))) {
         pView->Release();
         return;
     }
-    std::cout << "Got Current Desktop." << std::endl;
 
-    IVirtualDesktop* pAdjacentDesktop = nullptr;
+    IVirtualDesktop* pAdjacent = nullptr;
     int dirCode = (direction == -1) ? VD_DIRECTION_LEFT : VD_DIRECTION_RIGHT;
+    HRESULT hr = pVDMInternal->GetAdjacentDesktop(pCurrent, dirCode, &pAdjacent);
 
-    hr = pVDMInternal->GetAdjacentDesktop(pCurrentDesktop, dirCode, &pAdjacentDesktop);
-    if (FAILED(hr) || !pAdjacentDesktop) {
-        // Expected error when trying to move beyond the first/last desktop
-        std::cerr << "GetAdjacentDesktop failed/none. HR=" << std::hex << hr << std::endl;
-        pCurrentDesktop->Release();
-        pView->Release();
-        return;
-    }
-    std::cout << "Got Adjacent Desktop." << std::endl;
-
-    hr = pVDMInternal->MoveViewToDesktop(pView, pAdjacentDesktop);
-    if (SUCCEEDED(hr)) {
-        std::cout << "SUCCESS: Window moved!" << std::endl;
-
-        hr = pVDMInternal->SwitchDesktop(pAdjacentDesktop);
-        if (SUCCEEDED(hr)) {
-            std::cout << "SUCCESS: Switched to new desktop!" << std::endl;
-        } else {
-            std::cerr << "SwitchDesktop failed: " << std::hex << hr << std::endl;
+    // If moving right and no adjacent desktop exists, create one
+    if ((FAILED(hr) || !pAdjacent) && direction == 1) {
+        std::cout << "No adjacent desktop on right. Creating new one..." << std::endl;
+        IVirtualDesktop* pNew = nullptr;
+        if (SUCCEEDED(pVDMInternal->CreateDesktop(&pNew))) {
+            pAdjacent = pNew; // Use the new one
         }
-    } else {
-        std::cerr << "MoveViewToDesktop failed: " << std::hex << hr << std::endl;
     }
 
-    pAdjacentDesktop->Release();
-    pCurrentDesktop->Release();
+    if (pAdjacent) {
+        pVDMInternal->MoveViewToDesktop(pView, pAdjacent);
+        pVDMInternal->SwitchDesktop(pAdjacent);
+        pAdjacent->Release();
+        std::cout << "Success." << std::endl;
+    } else {
+        std::cerr << "Could not find or create adjacent desktop." << std::endl;
+    }
+
+    pCurrent->Release();
     pView->Release();
 }
 
 // ----------------------------------------------------------------------------
-// Keyboard Hook
+// Hooks
 // ----------------------------------------------------------------------------
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION) {
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
             KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
+            
+            bool win = (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000);
+            bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000);
+            bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000);
 
-            if (p->vkCode == VK_LEFT || p->vkCode == VK_RIGHT) {
-                bool shiftPressed = (GetAsyncKeyState(VK_SHIFT) & 0x8000);
-                bool winPressed = (GetAsyncKeyState(VK_LWIN) & 0x8000) || (GetAsyncKeyState(VK_RWIN) & 0x8000);
-
-                if (shiftPressed && winPressed) {
-                    std::cout << "[HOOK] Win+Shift+" << (p->vkCode == VK_LEFT ? "LEFT" : "RIGHT") << " detected." << std::endl;
-
+            if (win) {
+                // Win + Shift + Left/Right -> Move Window Relative
+                if (shift && !alt) {
                     if (p->vkCode == VK_LEFT) {
                         PostThreadMessage(g_mainThreadId, WM_APP_MOVE_LEFT, 0, 0);
-                    } else {
-                        PostThreadMessage(g_mainThreadId, WM_APP_MOVE_RIGHT, 0, 0);
+                        return 1;
                     }
-                    return 1; // Consume key to prevent Windows default behavior
+                    if (p->vkCode == VK_RIGHT) {
+                        PostThreadMessage(g_mainThreadId, WM_APP_MOVE_RIGHT, 0, 0);
+                        return 1;
+                    }
+                }
+                // Win + Number -> Switch Only
+                else if (!shift && !alt && p->vkCode >= '1' && p->vkCode <= '9') {
+                    int index = p->vkCode - '1';
+                    PostThreadMessage(g_mainThreadId, WM_APP_SWITCH_TO_INDEX, (WPARAM)index, 0);
+                    return 1; 
+                }
+                // Win + Alt + Number -> Move Window & Switch
+                else if (!shift && alt && p->vkCode >= '1' && p->vkCode <= '9') {
+                    int index = p->vkCode - '1';
+                    PostThreadMessage(g_mainThreadId, WM_APP_MOVE_TO_INDEX, (WPARAM)index, 0);
+                    return 1;
                 }
             }
         }
@@ -156,38 +222,32 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 // ----------------------------------------------------------------------------
-// Main Entry Point
+// Main
 // ----------------------------------------------------------------------------
 
 int main() {
     g_mainThreadId = GetCurrentThreadId();
-    std::cout << "Main Thread ID: " << g_mainThreadId << std::endl;
-
     InitializeVirtualDesktopManager();
 
-    if (!pVDMInternal) {
-        std::cerr << "Critical Error: Initialization failed. Exiting." << std::endl;
-        return 1;
-    }
+    if (!pVDMInternal) return 1;
 
     hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
-    if (!hKeyboardHook) {
-        std::cerr << "Critical Error: Failed to install keyboard hook!" << std::endl;
-        return 1;
-    }
-
-    std::cout << "Listening for Win + Shift + Left/Right..." << std::endl;
-    std::cout << "Logs enabled (Press Ctrl+C to exit)." << std::endl;
+    
+    std::cout << "DesktopMover Running:" << std::endl;
+    std::cout << " [Win + 1..9]         Switch to Desktop" << std::endl;
+    std::cout << " [Win + Alt + 1..9]   Move Window & Switch" << std::endl;
+    std::cout << " [Win + Shift + <|>]  Move Window Left/Right (Creates on Right)" << std::endl;
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_APP_MOVE_LEFT) {
-            MoveWindowToDesktop(-1);
-        } else if (msg.message == WM_APP_MOVE_RIGHT) {
-            MoveWindowToDesktop(1);
-        } else {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+        switch (msg.message) {
+            case WM_APP_MOVE_LEFT:       MoveWindowRelative(-1); break;
+            case WM_APP_MOVE_RIGHT:      MoveWindowRelative(1); break;
+            case WM_APP_SWITCH_TO_INDEX: SwitchToDesktopAtIndex((int)msg.wParam); break;
+            case WM_APP_MOVE_TO_INDEX:   MoveWindowToDesktopAtIndex((int)msg.wParam); break;
+            default:
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
         }
     }
 
