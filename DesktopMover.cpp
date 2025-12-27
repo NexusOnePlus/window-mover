@@ -91,6 +91,7 @@ void SwitchToDesktopAtIndex(int targetIndex) {
     EnsureDesktopCount(targetIndex);
     IVirtualDesktop* pTarget = GetDesktopAtIndex(targetIndex);
     if (pTarget) {
+        SetForegroundWindow(GetShellWindow());
         pVDMInternal->SwitchDesktop(pTarget);
         pTarget->Release();
     }
@@ -110,6 +111,7 @@ void MoveWindowToDesktopAtIndex(int targetIndex) {
     if (pTarget) {
         pVDMInternal->MoveViewToDesktop(pView, pTarget);
         pVDMInternal->SwitchDesktop(pTarget);
+        SetForegroundWindow(hwnd);
         pTarget->Release();
     }
     pView->Release();
@@ -144,6 +146,7 @@ void MoveWindowRelative(int direction) {
     if (pAdjacent) {
         pVDMInternal->MoveViewToDesktop(pView, pAdjacent);
         pVDMInternal->SwitchDesktop(pAdjacent);
+        SetForegroundWindow(hwnd);
         pAdjacent->Release();
     }
 
@@ -154,6 +157,17 @@ void MoveWindowRelative(int direction) {
 // ----------------------------------------------------------------------------
 // Keyboard Hook
 // ----------------------------------------------------------------------------
+
+void SuppressStartMenu() {
+    INPUT inputs[1] = {};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = 0xFF; 
+    inputs[0].ki.dwFlags = 0; 
+    SendInput(1, inputs, sizeof(INPUT));
+    
+    inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(1, inputs, sizeof(INPUT));
+}
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION) {
@@ -168,21 +182,25 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 if (shift && !alt) {
                     if (p->vkCode == VK_LEFT) {
                         PostMessage(hHiddenWindow, WM_APP_MOVE_LEFT, 0, 0);
+                        SuppressStartMenu();
                         return 1;
                     }
                     if (p->vkCode == VK_RIGHT) {
                         PostMessage(hHiddenWindow, WM_APP_MOVE_RIGHT, 0, 0);
+                        SuppressStartMenu();
                         return 1;
                     }
                 }
                 else if (!shift && !alt && p->vkCode >= '1' && p->vkCode <= '9') {
                     int index = p->vkCode - '1';
                     PostMessage(hHiddenWindow, WM_APP_SWITCH_TO_INDEX, (WPARAM)index, 0);
+                    SuppressStartMenu();
                     return 1; 
                 }
                 else if (!shift && alt && p->vkCode >= '1' && p->vkCode <= '9') {
                     int index = p->vkCode - '1';
                     PostMessage(hHiddenWindow, WM_APP_MOVE_TO_INDEX, (WPARAM)index, 0);
+                    SuppressStartMenu();
                     return 1;
                 }
             }
